@@ -1,0 +1,495 @@
+---
+title: "R Final Project"
+author: "Amon Santos"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyverse)
+library(lubridate)
+```
+
+Superstore Dataset from kagle: "https://www.kaggle.com/datasets/vivek468/superstore-dataset-final"
+
+```{r}
+df <- read_csv("Sample - Superstore.csv")
+head(df)
+```
+
+## Check for missing values
+```{r}
+sum(is.na(df))
+colSums(is.na(df))
+```
+
+## Check for duplicates
+```{r}
+sum(duplicated(df))
+```
+
+## Check data types are correct
+```{r}
+glimpse(df)
+```
+
+## Check for outliers in numeric columns
+```{r}
+summary(df$Sales)
+summary(df$Profit)
+summary(df$Discount)
+summary(df$Quantity)
+```
+While the Profit collumn has many outliers, it won't be wise to take them out, since it heavily changes the big picture of the companies issues. The high and low profits matter and are very significant.
+
+## Check categorical columns for unexpected values
+```{r}
+unique(df$Region)
+unique(df$Category)
+unique(df$Segment)
+unique(df$`Ship Mode`)
+```
+
+## Mutating Profit Margin
+```{r}
+#The higher the margin, the more efficiently that product is making money relative to its price.
+df <- df %>% mutate(Profit_Margin = Profit / Sales)
+
+head(df)
+```
+
+## Parsing Date Columns
+```{r}
+# Convert Order Date and Ship Date from character to date format
+df <- df %>%
+  mutate(
+    Order_Date   = mdy(`Order Date`),
+    Ship_Date    = mdy(`Ship Date`),
+    Order_Year   = year(Order_Date),
+    Order_Month  = month(Order_Date, label = TRUE),
+    Days_to_Ship = as.numeric(Ship_Date - Order_Date)
+  )
+
+# Verify date range
+range(df$Order_Date)
+
+# Confirm no ship dates precede order dates
+sum(df$Ship_Date < df$Order_Date)
+```
+
+Data runs from January 3, 2014 to December 30, 2017 — 4 complete years of transactions. No ship dates precede their order dates, confirming the date columns are clean.
+
+## Grouped Summaries
+```{r}
+df %>%
+  group_by(Region, `Sub-Category`) %>%
+  summarise(
+    Total_Sales = sum(Sales),
+    Total_Profit = sum(Profit),
+    Avg_Profit_Margin = mean(Profit_Margin)
+  )
+```
+
+## Descriptive Statistics
+```{r}
+# Average profit per order
+mean(df$Profit)
+
+# Middle value of all profits
+median(df$Profit)
+
+# How spread out profits are
+sd(df$Profit)
+
+# Average revenue per order
+mean(df$Sales)
+
+# Middle value of all sales
+median(df$Sales)
+
+# How spread out sales are
+sd(df$Sales)
+
+# % of orders with no discount- Most orders are here
+mean(df$Discount == 0) * 100
+
+# % of orders at exactly 20%
+mean(df$Discount == 0.20) * 100
+
+# % of orders above 20% — the loss zone
+mean(df$Discount > 0.20) * 100
+
+# % of orders above 50% — guaranteed losses
+mean(df$Discount > 0.50) * 100
+```
+
+## Profit Margin by Category
+```{r}
+df %>%
+  group_by(Category) %>%
+  summarise(Avg_Profit_Margin = mean(Profit_Margin))
+```
+Technology having the highest margin and furniture with the lowest.
+
+## T-Test: West vs South Profit
+```{r, results='hide'}
+# Extract profit by region
+west    <- df %>% filter(Region == "West")    %>% pull(Profit)
+east    <- df %>% filter(Region == "East")    %>% pull(Profit)
+central <- df %>% filter(Region == "Central") %>% pull(Profit)
+south   <- df %>% filter(Region == "South")   %>% pull(Profit)
+
+# West vs East
+t.test(west, east)
+
+# West vs Central
+t.test(west, central)
+
+# West vs South
+t.test(west, south)
+
+# East vs Central
+t.test(east, central)
+
+# East vs South
+t.test(east, south)
+
+# Central vs South
+t.test(central, south)
+```
+```{r, echo=FALSE}
+# Summary table of all pairwise t-tests
+tribble(
+  ~Comparison,       ~P_Value, ~Significant, ~Avg_Diff,
+  "West vs East",    0.7609,   "No",         "$1.71",
+  "West vs Central", 0.0136,   "Yes",        "$16.76",
+  "West vs South",   0.4147,   "No",         "$4.99",
+  "East vs Central", 0.0499,   "Yes",        "$15.04",
+  "East vs South",   0.6436,   "No",         "$3.28",
+  "Central vs South",0.1432,   "No",         "-$11.77"
+)
+```
+
+
+## Linear Regression: Discount vs Profit
+```{r}
+model <- lm(Profit ~ Discount, data = df)
+summary(model)
+```
+
+Intercept = 67.56 — at 0% discount, average profit is $67.56.
+
+Discount = -249.05 is the slope of the regression line. At an increase discount of 100%, the profit drops by $249.05 — every 10% increase in discount cuts profit by ~$24.90.
+
+p-value < 2.2e-16 — extremely significant, discount clearly predicts profit.
+
+R-squared = 0.048 — discount only explains 5% of profit variation, other factors matter too. Other factors like, city, region, and category.
+
+## Total Profit by Region
+```{r, echo=FALSE}
+df %>%
+  group_by(Region) %>%
+  summarise(
+    Total_Sales  = sum(Sales),
+    Total_Profit = sum(Profit)
+  ) %>%
+  pivot_longer(cols = c(Total_Sales, Total_Profit),
+               names_to = "Metric", values_to = "Value") %>%
+  mutate(Metric = recode(Metric,
+                         "Total_Sales"  = "Total Sales",
+                         "Total_Profit" = "Total Profit")) %>%
+  ggplot(aes(x = Value, y = reorder(Region, Value), fill = Metric)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = scales::dollar(Value, scale = 1/1000,
+                                       suffix = "K", accuracy = 1),
+                group = Metric),
+            position = position_dodge(width = 0.9),
+            hjust = -0.15, size = 3) +
+  scale_x_continuous(labels = scales::dollar,
+                     expand = expansion(mult = c(0, 0.20))) +
+  scale_fill_manual(values = c("Total Sales"  = "steelblue",
+                               "Total Profit" = "darkgreen")) +
+  labs(
+    title = "Sales vs. Profit by Region",
+    subtitle = "Central has high sales volume but disproportionately low profit",
+    x = "Amount (USD)", y = "Region", fill = NULL
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+```{r}
+df %>%
+  group_by(Region) %>%
+  summarise(
+    Total_Sales  = sum(Sales),
+    Total_Profit = sum(Profit),
+    Profit_Ratio = (Total_Profit / Total_Sales) * 100
+  ) %>%
+  ggplot(aes(x = reorder(Region, Profit_Ratio),
+             y = Profit_Ratio, fill = Profit_Ratio)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(Profit_Ratio, 1), "%")),
+            vjust = -0.4, fontface = "bold",
+            size = 4, color = "darkorange") +
+  scale_y_continuous(labels = function(x) paste0(x, "%"),
+                     expand = expansion(mult = c(0, 0.15))) +
+  scale_fill_gradient(low = "#f5c97a", high = "#d46e00", guide = "none") +
+  labs(
+    title    = "Profit Margin by Region",
+    subtitle = "Central converts the least revenue into profit at only 7.9%",
+    x        = "Region",
+    y        = "Profit Margin %"
+  ) +
+  theme_minimal() +
+  theme(plot.title    = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+## Profit Margin by Category
+```{r, echo=FALSE}
+df %>%
+  group_by(Region, Category) %>%
+  summarise(Total_Profit = sum(Profit), .groups = "drop") %>%
+  ggplot(aes(x = Category, y = Region, fill = Total_Profit)) +
+  geom_tile(color = "white", linewidth = 1.2) +
+  geom_tile(data = . %>% filter(Total_Profit < 0),
+            fill = "#ff0000", color = "white", linewidth = 1.2) +
+  geom_text(aes(label = scales::dollar(Total_Profit, accuracy = 1)),
+            color = "black", size = 3.8, fontface = "bold") +
+  scale_fill_gradient2(low = "#e60000", mid = "white", high = "forestgreen",
+                       midpoint = 0, labels = scales::dollar) +
+  labs(
+    title = "Total Profit by Region and Category",
+    subtitle = "Red = net loss. Central is the only region where Furniture loses money overall.",
+    x = "Category", y = "Region", fill = "Total Profit"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        panel.grid = element_blank())
+```
+
+## Average Profit by Discount Level
+```{r, echo=FALSE}
+df %>%
+  mutate(Discount_Bucket = cut(Discount,
+                               breaks = c(-0.01, 0.0001, 0.10, 0.20, 0.30, 0.50, 1.0),
+                               labels = c("0%", "1-10%", "11-20%",
+                                          "21-30%", "31-50%", "51%+"))) %>%
+  group_by(Discount_Bucket) %>%
+  summarise(
+    Avg_Profit = mean(Profit),
+    Loss_Rate  = mean(Profit < 0) * 100,
+    .groups    = "drop"
+  ) %>%
+  ggplot(aes(x = Discount_Bucket, y = Avg_Profit, fill = Avg_Profit > 0)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = scales::dollar(Avg_Profit, accuracy = 0.01)),
+            vjust = ifelse(c(TRUE, TRUE, TRUE, FALSE, FALSE, FALSE), -0.5, 1.5),
+            fontface = "bold", size = 3.5) +
+  geom_text(aes(label = paste0(round(Loss_Rate), "% of orders lose money")),
+            vjust = ifelse(c(TRUE, TRUE, TRUE, FALSE, FALSE, FALSE), -2.0, 3.2),
+            size = 2.8, color = "gray40") +
+  scale_fill_manual(values = c("TRUE" = "steelblue", "FALSE" = "red")) +
+  scale_y_continuous(labels = scales::dollar,
+                     expand = expansion(mult = c(0.30, 0.30))) +
+  labs(
+    title    = "Average Profit by Discount Range",
+    subtitle = "Above 20% discount, 92–100% of orders lose money",
+    x        = "Discount Range",
+    y        = "Average Profit per Order"
+  ) +
+  theme_minimal() +
+  theme(plot.title    = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+At 21–30% discount, 92 out of every 100 orders we fulfilled cost us more than we made back. We were essentially paying to serve those customers.
+At 31–50% discount, same story — 92% of orders are losing money.
+At 51%+, it's 100%. Every single order at that discount level is a guaranteed loss. There are no exceptions.
+
+The dollar figure on each bar tells you the average profit or loss per order in that group. So at 51%+, we're not just losing money on most orders — we're losing an average of $89.44 on every single one.
+
+## Top 10 Cities by Loss on High-Discount Orders
+```{r, echo=FALSE}
+df %>%
+  filter(Discount > 0.20) %>%
+  group_by(City, Region) %>%
+  summarise(Total_Loss = sum(Profit), .groups = "drop") %>%
+  arrange(Total_Loss) %>%
+  slice_head(n = 10) %>%
+  ggplot(aes(x = Total_Loss, y = reorder(City, Total_Loss), fill = Region)) +
+  geom_col() +
+  geom_text(aes(label = scales::dollar(Total_Loss, accuracy = 1)),
+            hjust = 1.08, color = "black", fontface = "bold", size = 3.2) +
+  scale_x_continuous(labels = scales::dollar,
+                     expand = expansion(mult = c(0.20, 0.05))) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title    = "Top 10 Cities by Loss on High-Discount Orders",
+    subtitle = "Philadelphia, Houston, and Chicago account for ~29% of all high-discount losses",
+    x        = "Total Loss (orders with Discount > 20%)",
+    y        = "City",
+    fill     = "Region"
+  ) +
+  theme_minimal() +
+  theme(plot.title    = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+Philadelphia and Houston each exceed $14K in losses from high discount orders alone. Six of the top 10 cities are in the Central region, confirming it as the discounting problem area.
+
+## Are High-Discount Losses Getting Worse Over Time?
+```{r, echo=FALSE}
+df %>%
+  mutate(Order_Year = year(mdy(`Order Date`))) %>%
+  filter(Discount > 0.20) %>%
+  group_by(Order_Year) %>%
+  summarise(
+    Total_Loss = sum(Profit),
+    Avg_Loss   = mean(Profit),
+    .groups    = "drop"
+  ) %>%
+  ggplot(aes(x = Order_Year)) +
+  geom_col(aes(y = Total_Loss, fill = "Total Loss"), alpha = 0.85, width = 0.6) +
+  geom_text(aes(y = 0,
+                label = scales::dollar(Total_Loss, accuracy = 1)),
+            vjust = -0.4, color = "tomato", fontface = "bold", size = 3.5) +
+  geom_line(aes(y = Avg_Loss * 400, color = "Avg Loss per Order"),
+            linewidth = 1.2) +
+  geom_point(aes(y = Avg_Loss * 400, color = "Avg Loss per Order"),
+             size = 3) +
+  geom_text(aes(y = Avg_Loss * 400,
+                label = scales::dollar(Avg_Loss, accuracy = 0.01)),
+            vjust = 1.8, color = "steelblue", fontface = "bold", size = 3.2) +
+  scale_y_continuous(
+    labels   = scales::dollar,
+    expand   = expansion(mult = c(0.05, 0.20)),
+    sec.axis = sec_axis(~ . / 400, name = "Avg Loss per Order",
+                        labels = scales::dollar)
+  ) +
+  scale_fill_manual(values  = c("Total Loss"         = "tomato")) +
+  scale_color_manual(values = c("Avg Loss per Order" = "steelblue")) +
+  scale_x_continuous(breaks = 2014:2017) +
+  labs(
+    title    = "High-Discount Losses by Year (2014–2017)",
+    subtitle = "Bars = total loss | Line = average loss per order",
+    x        = "Year",
+    y        = "Total Loss",
+    fill     = NULL,
+    color    = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title      = element_text(hjust = 0.5),
+    plot.subtitle   = element_text(hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+The company isn't discounting more aggressively per order. it's discounting more frequently. Volume grows more and more every year while average loss per order stays relatively constant over the years.
+
+## Monthly Profit Trend (2014–2017)
+```{r, echo=FALSE}
+actual <- df %>%
+  mutate(Month_Year = floor_date(Order_Date, "month")) %>%
+  group_by(Month_Year) %>%
+  summarise(Total_Profit = sum(Profit), .groups = "drop") %>%
+  mutate(Scenario = "Actual Profit")
+
+no_high_disc <- df %>%
+  filter(Discount <= 0.20) %>%
+  mutate(Month_Year = floor_date(Order_Date, "month")) %>%
+  group_by(Month_Year) %>%
+  summarise(Total_Profit = sum(Profit), .groups = "drop") %>%
+  mutate(Scenario = "If No Discounts Above 20%")
+
+combined <- bind_rows(actual, no_high_disc)
+
+last_points <- combined %>%
+  group_by(Scenario) %>%
+  slice_max(Month_Year, n = 1)
+
+ggplot(combined, aes(x = Month_Year, y = Total_Profit, color = Scenario)) +
+  geom_line(linewidth = 0.8) +
+  geom_smooth(method = "lm", linetype = "dashed", se = FALSE, linewidth = 0.7) +
+  geom_text(data = last_points,
+            aes(label = paste0("$", round(Total_Profit, 0))),
+            hjust = -0.15, fontface = "bold", size = 3.2) +
+  annotate("text", x = as.Date("2014-06-01"), y = max(actual$Total_Profit) * 1.35,
+           label = "4yr No High-Disc Total: $421,773",
+           color = "darkgreen", fontface = "bold", size = 3.5, hjust = 0) +
+  annotate("text", x = as.Date("2014-06-01"), y = max(actual$Total_Profit) * 1.20,
+           label = "4yr Actual Total: $286,397",
+           color = "steelblue", fontface = "bold", size = 3.5, hjust = 0) +
+  annotate("text", x = as.Date("2014-06-01"), y = max(actual$Total_Profit) * 1.05,
+           label = "Difference: +$135,376",
+           color = "red", fontface = "bold", size = 3.5, hjust = 0) +
+  scale_y_continuous(labels = scales::dollar,
+                     expand = expansion(mult = c(0, 0.55))) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b %Y",
+               expand = expansion(mult = c(0, 0.12))) +
+  scale_color_manual(values = c("Actual Profit"             = "steelblue",
+                                "If No Discounts Above 20%" = "darkgreen")) +
+  labs(
+    title    = "Monthly Profit Trend: Actual vs. Without High Discounts",
+    subtitle = "Green line shows what profit could have looked like if discounts above 20% had been blocked",
+    x        = NULL,
+    y        = "Monthly Profit",
+    color    = NULL
+  ) +
+  theme_minimal() +
+  theme(plot.title      = element_text(hjust = 0.5),
+        plot.subtitle   = element_text(hjust = 0.5),
+        axis.text.x     = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+```
+
+```{r}
+order_data <- df %>%
+  mutate(
+    Month_Year     = floor_date(Order_Date, "month"),
+    Discount_Group = ifelse(Discount > 0.20,
+                            "High Discount (>20%)",
+                            "Normal Discount (<=20%)")
+  ) %>%
+  group_by(Month_Year, Discount_Group) %>%
+  summarise(Order_Count = n(), .groups = "drop")
+
+total_high <- df %>% filter(Discount > 0.20) %>% nrow()
+total_all  <- nrow(df)
+
+ggplot(order_data, aes(x = Month_Year, y = Order_Count, fill = Discount_Group)) +
+  geom_col(position = "stack") +
+  annotate("text", x = as.Date("2014-02-01"),
+           y = max(order_data %>% group_by(Month_Year) %>%
+                     summarise(total = sum(Order_Count)) %>% pull(total)) * 1.05,
+           label = paste0("Total high-discount orders (2014-2017): ",
+                          total_high, " of ", total_all,
+                          " (", round(total_high/total_all*100, 1), "%)"),
+           hjust = 0, color = "red", fontface = "bold", size = 3.2) +
+  scale_fill_manual(values = c("High Discount (>20%)"    = "red",
+                               "Normal Discount (<=20%)" = "steelblue")) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b %Y",
+               expand = expansion(mult = c(0, 0.05))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.20))) +
+  labs(
+    title    = "Monthly Order Volume by Discount Type (2014–2017)",
+    subtitle = "Red portion shows the growing share of monthly orders carrying high discounts",
+    x        = NULL,
+    y        = "Number of Orders",
+    fill     = NULL
+  ) +
+  theme_minimal() +
+  theme(plot.title      = element_text(hjust = 0.5),
+        plot.subtitle   = element_text(hjust = 0.5),
+        axis.text.x     = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+```
+
+After looking at all of this data, a few things stand out. Central region is the biggest problem. It has the lowest profit margin out of all four regions at just 7.9%, while West is sitting at 14.9%. It is also the only region where Furniture is actually losing money, and four of the ten worst cities for losses are in Central: Houston, Chicago, San Antonio, and Dallas.
+The discount story is pretty straightforward too. Once you go above 20%, you are almost always losing money on that order. Go above 50% and it is a guaranteed loss every single time. If the company had just stopped issuing discounts above 20%, they would have kept an extra $135,376 over four years. Those problem orders made up 13.9% of all transactions.
+So the real question is: was that 13.9% of orders actually worth losing $135,376 over?
