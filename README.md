@@ -18,7 +18,7 @@ Top 10 Cities With Negative Profit on High Discount Orders
 High Discount Losses by Year
 ![Sales vs Profit by Region](High-DiscountLosesByYear.png)
 Monthly Profit Trend
-![Sales vs Profit by Region](SalesVsProfit.png)
+![Sales vs Profit by Region](MonthlyProfitTrend.png)
 Monthly Order Volume by Discount Type
 ![Sales vs Profit by Region](MonthlyOrderVolume.png)
 
